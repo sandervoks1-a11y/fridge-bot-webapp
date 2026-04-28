@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fridge Bot Scanner</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background: #0b0f17;
+        color: #e5e7eb;
+      }
+      .wrap { padding: 16px; max-width: 720px; margin: 0 auto; }
+      h1 { font-size: 18px; margin: 0 0 8px; }
+      p { margin: 0 0 12px; color: #9ca3af; font-size: 13px; }
+      .card {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 14px;
+        padding: 14px;
+      }
+      #reader { width: 100%; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+      button {
+        background: #2563eb;
+        border: 0;
+        color: white;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary { background: #374151; }
+      .value {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #0b1220;
+        border: 1px solid #1f2937;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        word-break: break-all;
+      }
+      .hint { margin-top: 10px; font-size: 12px; color: #9ca3af; }
+    </style>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Сканер для Fridge Bot</h1>
+      <p>Наведи камеру на штрихкод (EAN) или QR/DataMatrix (Честный ЗНАК). После сканирования код отправится в бот.</p>
+
+      <div class="card">
+        <div id="reader"></div>
+        <div id="last" class="value" style="display:none"></div>
+        <div class="row">
+          <button id="btnStart">Запустить камеру</button>
+          <button id="btnStop" class="secondary" disabled>Остановить</button>
+          <button id="btnSend" class="secondary" disabled>Отправить в бот</button>
+        </div>
+        <div class="hint" id="status">Готов к запуску.</div>
+      </div>
+    </div>
+
+    <script>
+      const tg = window.Telegram?.WebApp;
+      if (tg) {
+        tg.expand();
+        tg.ready();
+      }
+
+      const statusEl = document.getElementById('status');
+      const lastEl = document.getElementById('last');
+      const btnStart = document.getElementById('btnStart');
+      const btnStop = document.getElementById('btnStop');
+      const btnSend = document.getElementById('btnSend');
+
+      let lastCode = null;
+      let html5Qr = null;
+
+      function setStatus(msg) { statusEl.textContent = msg; }
+      function setLast(code) {
+        lastCode = code;
+        lastEl.style.display = 'block';
+        lastEl.textContent = code;
+        btnSend.disabled = !code;
+      }
+
+      async function start() {
+        try {
+          if (!html5Qr) {
+            html5Qr = new Html5Qrcode('reader');
+          }
+
+          setStatus('Запуск камеры...');
+          btnStart.disabled = true;
+
+          const config = {
+            fps: 12,
+            qrbox: { width: 260, height: 260 },
+            rememberLastUsedCamera: true,
+            supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+          };
+
+          await html5Qr.start(
+            { facingMode: 'environment' },
+            config,
+            (decodedText, decodedResult) => {
+              if (!decodedText) return;
+              setLast(decodedText);
+              setStatus('Код считан. Можно отправлять.');
+            },
+            () => {}
+          );
+
+          btnStop.disabled = false;
+          setStatus('Камера запущена.');
+        } catch (e) {
+          btnStart.disabled = false;
+          btnStop.disabled = true;
+          setStatus('Ошибка запуска камеры: ' + (e?.message || String(e)));
+        }
+      }
+
+      async function stop() {
+        try {
+          if (!html5Qr) return;
+          await html5Qr.stop();
+          await html5Qr.clear();
+          btnStart.disabled = false;
+          btnStop.disabled = true;
+          setStatus('Камера остановлена.');
+        } catch (e) {
+          setStatus('Ошибка остановки: ' + (e?.message || String(e)));
+        }
+      }
+
+      function send() {
+        if (!lastCode) return;
+        const payload = JSON.stringify({ code: lastCode });
+        if (tg && typeof tg.sendData === 'function') {
+          tg.sendData(payload);
+          setStatus('Отправлено в бот. Можно закрыть окно.');
+        } else {
+          setStatus('Не удалось отправить: Telegram WebApp API недоступен.');
+        }
+      }
+
+      btnStart.addEventListener('click', start);
+      btnStop.addEventListener('click', stop);
+      btnSend.addEventListener('click', send);
+    </script>
+  </body>
+</html>
