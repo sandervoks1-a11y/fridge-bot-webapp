@@ -20,6 +20,7 @@
         border: 1px solid #1f2937;
         border-radius: 14px;
         padding: 14px;
+        margin-bottom: 12px;
       }
       #reader { width: 100%; }
       .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
@@ -31,8 +32,11 @@
         border-radius: 10px;
         font-weight: 600;
         cursor: pointer;
+        font-size: 14px;
       }
       button.secondary { background: #374151; }
+      button.danger { background: #dc2626; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
       .value {
         margin-top: 12px;
         padding: 10px 12px;
@@ -44,24 +48,76 @@
         word-break: break-all;
       }
       .hint { margin-top: 10px; font-size: 12px; color: #9ca3af; }
+      .product-list { margin-top: 12px; }
+      .product-item {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 8px;
+        background: #0b1220;
+        border: 1px solid #1f2937;
+        border-radius: 8px;
+        margin-bottom: 8px;
+      }
+      .product-item input {
+        flex: 1;
+        background: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 6px;
+        padding: 8px 10px;
+        color: #e5e7eb;
+        font-size: 14px;
+      }
+      .product-item input:focus {
+        outline: none;
+        border-color: #2563eb;
+      }
+      .product-item .code {
+        font-family: monospace;
+        font-size: 11px;
+        color: #9ca3af;
+        min-width: 100px;
+      }
+      .product-item button {
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+      .empty { color: #6b7280; font-style: italic; text-align: center; padding: 20px; }
+      .count { color: #9ca3af; font-size: 13px; margin-top: 8px; }
+      #scanSection { display: block; }
+      #listSection { display: none; }
     </style>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="html5-qrcode.min.js"></script>
   </head>
   <body>
     <div class="wrap">
-      <h1>Сканер для Fridge Bot</h1>
-      <p>Наведи камеру на штрихкод (EAN) или QR/DataMatrix (Честный ЗНАК). После сканирования код отправится в бот.</p>
+      <h1>📷 Сканер продуктов</h1>
+      <p>Наведи камеру на штрихкод. Продукты накапливаются в списке — можно редактировать названия перед отправкой.</p>
 
-      <div class="card">
+      <!-- Секция сканирования -->
+      <div id="scanSection" class="card">
         <div id="reader"></div>
-        <div id="last" class="value" style="display:none"></div>
         <div class="row">
-          <button id="btnStart">Запустить камеру</button>
-          <button id="btnStop" class="secondary" disabled>Остановить</button>
-          <button id="btnSend" class="secondary" disabled>Отправить в бот</button>
+          <button id="btnStart">▶️ Запустить камеру</button>
+          <button id="btnStop" class="secondary" disabled>⏹️ Остановить</button>
+          <button id="btnToList" class="secondary">📋 К списку</button>
         </div>
         <div class="hint" id="status">Готов к запуску.</div>
+      </div>
+
+      <!-- Секция списка -->
+      <div id="listSection" class="card">
+        <h2>📝 Список продуктов</h2>
+        <div class="count" id="count">0 продуктов</div>
+        <div class="product-list" id="productList">
+          <div class="empty">Список пуст. Сканируйте продукты.</div>
+        </div>
+        <div class="row">
+          <button id="btnBackToScan" class="secondary">➕ Добавить ещё</button>
+          <button id="btnSend" disabled>📤 Отправить в бот</button>
+          <button id="btnClear" class="danger">🗑️ Очистить</button>
+        </div>
       </div>
     </div>
 
@@ -72,23 +128,110 @@
         tg.ready();
       }
 
+      // Состояние
+      let products = [];
+      let html5Qr = null;
+      let isScanning = false;
+
+      // DOM элементы
       const statusEl = document.getElementById('status');
-      const lastEl = document.getElementById('last');
+      const productListEl = document.getElementById('productList');
+      const countEl = document.getElementById('count');
       const btnStart = document.getElementById('btnStart');
       const btnStop = document.getElementById('btnStop');
+      const btnToList = document.getElementById('btnToList');
+      const btnBackToScan = document.getElementById('btnBackToScan');
       const btnSend = document.getElementById('btnSend');
-
-      let lastCode = null;
-      let html5Qr = null;
+      const btnClear = document.getElementById('btnClear');
+      const scanSection = document.getElementById('scanSection');
+      const listSection = document.getElementById('listSection');
 
       function setStatus(msg) { statusEl.textContent = msg; }
-      function setLast(code) {
-        lastCode = code;
-        lastEl.style.display = 'block';
-        lastEl.textContent = code;
-        btnSend.disabled = !code;
+
+      // Переключение секций
+      function showScan() {
+        scanSection.style.display = 'block';
+        listSection.style.display = 'none';
       }
 
+      function showList() {
+        scanSection.style.display = 'none';
+        listSection.style.display = 'block';
+        renderProducts();
+      }
+
+      // Поиск названия продукта по коду
+      async function lookupProductName(code) {
+        // GTIN/EAN-13
+        const gtin = code.replace(/\D/g, '');
+        if (gtin.length >= 8 && gtin.length <= 14) {
+          try {
+            const resp = await fetch(`https://world.openfoodfacts.org/api/v0/product/${gtin}.json`);
+            const data = await resp.json();
+            if (data.status === 1 && data.product?.product_name) {
+              return data.product.product_name;
+            }
+          } catch (e) {
+            console.log('Lookup failed:', e);
+          }
+        }
+        return '';
+      }
+
+      // Добавление продукта
+      async function addProduct(code) {
+        // Проверка на дубликат
+        if (products.some(p => p.code === code)) {
+          setStatus('⚠️ Этот код уже в списке');
+          return;
+        }
+
+        setStatus('🔍 Ищу название...');
+        const name = await lookupProductName(code);
+        
+        products.push({ code, name, id: Date.now() + Math.random() });
+        setStatus(`✅ Добавлен: ${code}${name ? ' - ' + name : ''}`);
+        
+        // Автоматически переходим к списку после сканирования
+        setTimeout(() => {
+          showList();
+        }, 500);
+      }
+
+      // Рендер списка
+      function renderProducts() {
+        if (products.length === 0) {
+          productListEl.innerHTML = '<div class="empty">Список пуст. Сканируйте продукты.</div>';
+          countEl.textContent = '0 продуктов';
+          btnSend.disabled = true;
+          return;
+        }
+
+        countEl.textContent = `${products.length} ${products.length === 1 ? 'продукт' : products.length < 5 ? 'продукта' : 'продуктов'}`;
+        btnSend.disabled = false;
+
+        productListEl.innerHTML = products.map((p, idx) => `
+          <div class="product-item" data-id="${p.id}">
+            <span class="code">${p.code}</span>
+            <input type="text" value="${p.name || ''}" placeholder="Название продукта" onchange="updateName(${p.id}, this.value)">
+            <button class="danger" onclick="removeProduct(${p.id})">✕</button>
+          </div>
+        `).join('');
+      }
+
+      // Обновление названия
+      window.updateName = function(id, newName) {
+        const p = products.find(x => x.id === id);
+        if (p) p.name = newName.trim();
+      };
+
+      // Удаление продукта
+      window.removeProduct = function(id) {
+        products = products.filter(x => x.id !== id);
+        renderProducts();
+      };
+
+      // Запуск камеры
       async function start() {
         try {
           if (!html5Qr) {
@@ -97,39 +240,41 @@
 
           setStatus('Запуск камеры...');
           btnStart.disabled = true;
+          isScanning = true;
 
           const config = {
-            fps: 12,
-            qrbox: { width: 260, height: 260 },
-            rememberLastUsedCamera: true,
-            supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            rememberLastUsedCamera: true
           };
 
           await html5Qr.start(
             { facingMode: 'environment' },
             config,
-            (decodedText, decodedResult) => {
-              if (!decodedText) return;
-              setLast(decodedText);
-              setStatus('Код считан. Можно отправлять.');
+            (decodedText) => {
+              if (!decodedText || !isScanning) return;
+              addProduct(decodedText);
             },
             () => {}
           );
 
           btnStop.disabled = false;
-          setStatus('Камера запущена.');
+          setStatus('Камера запущена. Наведите на штрихкод.');
         } catch (e) {
+          isScanning = false;
           btnStart.disabled = false;
           btnStop.disabled = true;
-          setStatus('Ошибка запуска камеры: ' + (e?.message || String(e)));
+          setStatus('Ошибка: ' + (e?.message || String(e)));
         }
       }
 
+      // Остановка камеры
       async function stop() {
         try {
           if (!html5Qr) return;
           await html5Qr.stop();
           await html5Qr.clear();
+          isScanning = false;
           btnStart.disabled = false;
           btnStop.disabled = true;
           setStatus('Камера остановлена.');
@@ -138,20 +283,46 @@
         }
       }
 
+      // Отправка в бот
       function send() {
-        if (!lastCode) return;
-        const payload = JSON.stringify({ code: lastCode });
+        if (products.length === 0) return;
+        
+        // Фильтруем пустые названия
+        const payload = JSON.stringify({
+          products: products.map(p => ({
+            code: p.code,
+            name: p.name || null
+          }))
+        });
+        
         if (tg && typeof tg.sendData === 'function') {
           tg.sendData(payload);
-          setStatus('Отправлено в бот. Можно закрыть окно.');
+          setStatus('Отправлено в бот!');
+          // Очищаем после отправки
+          products = [];
+          renderProducts();
         } else {
-          setStatus('Не удалось отправить: Telegram WebApp API недоступен.');
+          alert('Telegram WebApp API недоступен. Данные:\n' + payload);
         }
       }
 
+      // Очистка списка
+      function clear() {
+        if (products.length === 0) return;
+        if (confirm('Очистить список?')) {
+          products = [];
+          renderProducts();
+          showScan();
+        }
+      }
+
+      // Event listeners
       btnStart.addEventListener('click', start);
       btnStop.addEventListener('click', stop);
+      btnToList.addEventListener('click', showList);
+      btnBackToScan.addEventListener('click', showScan);
       btnSend.addEventListener('click', send);
+      btnClear.addEventListener('click', clear);
     </script>
   </body>
 </html>
