@@ -162,9 +162,29 @@
 
       // Поиск названия продукта по коду
       async function lookupProductName(code) {
-        // GTIN/EAN-13
-        const gtin = code.replace(/\D/g, '');
-        if (gtin.length >= 8 && gtin.length <= 14) {
+        let gtin = '';
+        
+        // Вариант 1: Честный ЗНАК (DataMatrix) - извлекаем GTIN
+        // Формат: 01<GTIN>21<...> или с разделителями GS (ASCII 29)
+        if (code.includes('\x1D') || code.startsWith('01') || /^(\d{14,})/.test(code)) {
+          // Ищем GTIN после 01 или просто первые 8-14 цифр
+          const match = code.match(/01(\d{14})/) || code.match(/01(\d{13})/) || code.match(/(\d{13,14})/);
+          if (match) {
+            gtin = match[1];
+            console.log('Extracted GTIN from DataMatrix:', gtin);
+          }
+        }
+        
+        // Вариант 2: Обычный EAN-13/UPC - просто цифры
+        if (!gtin) {
+          const digits = code.replace(/\D/g, '');
+          if (digits.length >= 8 && digits.length <= 14) {
+            gtin = digits;
+          }
+        }
+        
+        // Поиск в OpenFoodFacts
+        if (gtin) {
           try {
             const resp = await fetch(`https://world.openfoodfacts.org/api/v0/product/${gtin}.json`);
             const data = await resp.json();
@@ -175,6 +195,7 @@
             console.log('Lookup failed:', e);
           }
         }
+        
         return '';
       }
 
