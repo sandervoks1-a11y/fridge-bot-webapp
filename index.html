@@ -115,7 +115,7 @@
         </div>
         <div class="row">
           <button id="btnBackToScan" class="secondary">➕ Добавить ещё</button>
-          <button id="btnSend" disabled>📤 Отправить в бот</button>
+          <button id="btnSend" disabled>� Копировать список</button>
           <button id="btnClear" class="danger">🗑️ Очистить</button>
         </div>
       </div>
@@ -283,26 +283,48 @@
         }
       }
 
-      // Отправка в бот
-      function send() {
+      // Копирование в буфер обмена
+      async function send() {
         if (products.length === 0) return;
         
-        // Фильтруем пустые названия
-        const payload = JSON.stringify({
-          products: products.map(p => ({
-            code: p.code,
-            name: p.name || null
-          }))
-        });
+        // Формируем текст для бота: каждый продукт с новой строки
+        const lines = products.map(p => {
+          const name = p.name || 'Неизвестный продукт';
+          return `+ ${name} 1 шт`;
+        }).join('\n');
         
-        if (tg && typeof tg.sendData === 'function') {
-          tg.sendData(payload);
-          setStatus('Отправлено в бот!');
-          // Очищаем после отправки
-          products = [];
-          renderProducts();
-        } else {
-          alert('Telegram WebApp API недоступен. Данные:\n' + payload);
+        try {
+          await navigator.clipboard.writeText(lines);
+          
+          // Показываем уведомление
+          const btn = document.getElementById('btnSend');
+          const originalText = btn.textContent;
+          btn.textContent = '✅ Скопировано!';
+          btn.style.background = '#16a34a';
+          setStatus('✅ Список скопирован! Вставь в чат с ботом.');
+          
+          setTimeout(() => {
+            btn.textContent = originalText;
+            btn.style.background = '';
+          }, 2000);
+          
+        } catch (err) {
+          // Fallback для старых браузеров
+          const textarea = document.createElement('textarea');
+          textarea.value = lines;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          
+          try {
+            document.execCommand('copy');
+            setStatus('✅ Список скопирован! Вставь в чат с ботом.');
+          } catch (e) {
+            alert('Не удалось скопировать. Скопируйте вручную:\n\n' + lines);
+          }
+          
+          document.body.removeChild(textarea);
         }
       }
 
